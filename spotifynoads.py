@@ -23,7 +23,6 @@ class SpotifyAdMuter(object):
         self.bus = dbus.SessionBus(mainloop=bus_loop)
         loop = gobject.MainLoop()
         self.notify_id = None
-        self.props_changed_listener()
         try: 
             self.props_changed_listener()
         except DBusException, e:
@@ -67,11 +66,10 @@ class SpotifyAdMuter(object):
             if is_ad:
                 print('Ad starting, muting.')
                 os.system('amixer -D pulse sset Master off')
-            elif self.prev_is_ad:
+            elif hasattr(self, 'prev_is_ad') and self.prev_is_ad:
                 print('Previously was ad, now isnt: unmuting.')
                 os.system('amixer -D pulse sset Master on')
             self.prev_is_ad = is_ad
 
 if __name__ == "__main__":
     SpotifyAdMuter()
-
