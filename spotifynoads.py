@@ -9,10 +9,11 @@ DBus listening code based on:
 """
 
 
+# requirements: PyGObject dbus-python
 import argparse
 import os
 import dbus
-import gobject
+from gi.repository import GLib
 from dbus.mainloop.glib import DBusGMainLoop
 from dbus.exceptions import DBusException
 
@@ -23,7 +24,7 @@ class PlayerAdMuter(object):
         self.prev_is_ad = None
         bus_loop = DBusGMainLoop(set_as_default=True)
         self.bus = dbus.SessionBus(mainloop=bus_loop)
-        loop = gobject.MainLoop()
+        loop = GLib.MainLoop()
         self.notify_id = None
         try: 
             self.props_changed_listener()
