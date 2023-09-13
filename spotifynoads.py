@@ -13,6 +13,7 @@ DBus listening code based on:
 import argparse
 import os
 import dbus
+from subprocess import check_output, Popen, DEVNULL
 from gi.repository import GLib
 from dbus.mainloop.glib import DBusGMainLoop
 from dbus.exceptions import DBusException
@@ -63,13 +64,69 @@ class PlayerAdMuter(object):
     def detect_and_handle_ads(self):
         pass
     
+    def parse_sink_inputs(self, sinks):
+        detected_sinks = sinks.split("    index: ")
+        app_sinks = []
+        for sink in detected_sinks:
+            index, pid, binary = None, None, None
+            # index
+            parts = sink.split('\n')
+            try:
+                index = int(parts[0])
+            except:
+                continue
+            for part in parts:
+                # process id
+                if 'application.process.id = ' in part:
+                    pid = int(part.split('application.process.id = ')[1].split('"')[1])
+                # process binary
+                elif 'application.process.binary = ' in part:
+                    binary = part.split('application.process.binary = ')[1].split('"')[1]
+                # sink latency
+                elif 'current latency: ' in part:
+                    latency = float(part.split('current latency: ')[1].split(' ms')[0])
+                else:
+                    continue
+            if binary == self.app_name:
+                app_sinks.append({'index': index, 'latency': latency, 'pid': pid, 'binary': binary})
+        return app_sinks
+
+    def detect_app_sink(self):
+        all_sinks = check_output(['pacmd', 'list-sink-inputs'], universal_newlines=True)
+        self.sinks = self.parse_sink_inputs(all_sinks)
+    
+    def wait_latency(self):
+        waiting_sinks = []
+        for s in self.sinks:
+            print(f'[spotifynoads.py] Adding sink {s["index"]} to wait list because of latency {s["latency"]} ms.')
+            waiting_sinks.append((s['index'], Popen(['sleep', str(s['latency']/1000)]))) # Warning: sleep accepts only seconds, not milliseconds
+        return waiting_sinks
+    
+    def toggle_mute_after_waiting(self, waiting_sinks, mute):
+        action = "Mute" if mute else "Unmute"
+        while waiting_sinks:
+            for sinkpair in waiting_sinks:
+                retcode = sinkpair[1].poll()
+                if retcode is not None: # Sleep finished, mute/unmute sink
+                    waiting_sinks.remove(sinkpair)
+                    print(f'[spotifynoads.py] {action} {self.app_name} sink {sinkpair[0]}.')
+                    Popen(['pacmd', 'set-sink-input-mute', str(sinkpair[0]), str(mute)], stdout=DEVNULL, stderr=DEVNULL)
+
     def mute(self):
-        print('Mute!')
-        os.system('amixer -q -D pulse sset Master off')
+        if self.sinks:
+            waiting_sinks = self.wait_latency()
+            self.toggle_mute_after_waiting(waiting_sinks, 1)
+        else:
+            print(f'[spotifynoads.py] Mute master.')
+            os.system('amixer -q -D pulse sset Master off')
     
     def unmute(self):
-        print('Unmute!')
-        os.system('amixer -q -D pulse sset Master on')
+        if self.sinks:
+            waiting_sinks = self.wait_latency()
+            self.toggle_mute_after_waiting(waiting_sinks, 0)
+        else:
+            print(f'[spotifynoads.py] Unmute master.')
+            os.system('amixer -q -D pulse sset Master on')
 
 
 class SpotifyAdMuter(PlayerAdMuter):
@@ -77,21 +134,24 @@ class SpotifyAdMuter(PlayerAdMuter):
     def __init__(self):
         """initialise."""
         self.player_name = "org.mpris.MediaPlayer2.spotify"
+        self.app_name = "spotify"
         super(SpotifyAdMuter, self).__init__()
 
     def detect_and_handle_ads(self, metadata):
-        #title = unicode(metadata.get("xesam:title"))
-        #album = unicode(metadata.get("xesam:album"))
-        #artist = unicode(', '.join(metadata.get("xesam:artist")))
-        #is_ad = metadata.get("mpris:trackid").startswith("spotify:ad:")
-        #print(u"title: {title}, artist: {artist}, is_ad: {is_ad}".format(
-        #    title=title, album=album, artist=artist, is_ad=is_ad).encode('utf8'))
-        is_ad = metadata.get("mpris:trackid").startswith("spotify:ad:")
+        # Detect sink. This is nessecary at every track change, because sometimes spotify adds new sinks for ads and deletes them afterwards.
+        self.detect_app_sink()
+        title = metadata.get("xesam:title")
+        album = metadata.get("xesam:album")
+        artist = ', '.join(metadata.get("xesam:artist"))
+        trackid = metadata.get("mpris:trackid")
+        is_ad = trackid.startswith("spotify:ad:") or trackid.startswith("/com/spotify/ad/")
+        print("[{app_name}] Playing new track.\n    trackid: {trackid}\n    title: {title}\n    artist: {artist}\n    album: {album}\n    is_ad: {is_ad}".format(
+            app_name=self.app_name, trackid=trackid, title=title, album=album, artist=artist, is_ad=is_ad))
         if is_ad:
-            print('Ad starting, muting.')
+            print('[spotifynoads.py] Ad starting, muting.')
             self.mute()
         elif self.prev_is_ad:
-            print('Previously was ad, now isnt: unmuting.')
+            print('[spotifynoads.py] Previously was ad, now isnt: unmuting.')
             self.unmute()
         self.prev_is_ad = is_ad
 
@@ -120,6 +180,7 @@ class YoutubeMusicAdMuter(PlayerAdMuter):
     def __init__(self):
         """initialise."""
         self.player_name = "org.mpris.MediaPlayer2.youtubemusic"
+        self.app_name = "youtubemusic"
         super(YoutubeMusicAdMuter, self).__init__()
 
 
