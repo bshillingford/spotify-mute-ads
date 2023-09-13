@@ -84,7 +84,12 @@ class PlayerAdMuter(object):
                     binary = part.split('application.process.binary = ')[1].split('"')[1]
                 # sink latency
                 elif 'current latency: ' in part:
-                    latency = float(part.split('current latency: ')[1].split(' ms')[0])
+                    l = part.split('current latency: ')[1].split(' ms')[0]
+                    try:
+                        latency = float(l)
+                    # some old versions of pulse audio localize the output kind of weird and use commas for floating point values
+                    except ValueError:
+                        latency = float(l.replace(',', '.'))
                 else:
                     continue
             if binary == self.app_name:
